@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root { --ink:#2b2340; --muted:#6c6684; --panel:#ffffff; --edge:#2b2340;
+          --S:#ff9ebb; --E:#ffcc33; --I:#e0457b; --D:#9a98a6; --R:#5b8def; --accent:#ff6b3d; }
+  html, body { margin:0; height:100%; overflow:hidden; color:var(--ink);
+               font-family: "Fredoka", "Nunito", system-ui, -apple-system, "Segoe UI", sans-serif;
+               background: linear-gradient(#8fd3ff 0%, #c9ecff 55%, #e9f8ff 100%); }
+  #app { position:relative; width:100%; height:100%; }
+  canvas#gl { display:block; }
+  .panel { position:absolute; background:var(--panel); border:3px solid var(--edge); border-radius:14px;
+           padding:8px 12px; box-shadow: 0 4px 0 var(--edge); font-size:14px; line-height:1.35; }
+  #clock { top:12px; left:12px; min-width:210px; }
+  #clock .big { font-size:26px; font-weight:700; }
+  #clock .sub { color:var(--muted); font-size:13px; }
+  .badge { display:inline-block; margin-top:6px; padding:2px 10px; border-radius:999px; font-weight:600;
+           font-size:13px; border:2px solid var(--edge); }
+  .b-ok { background:#c8f7c5; } .b-alert { background:#ffd0d0; } .b-over { background:#e6e1ff; }
+  #ctrlList { margin:4px 0 0; padding-left:18px; font-size:12.5px; color:var(--muted); }
+  #stats { top:12px; right:12px; min-width:200px; }
+  #stats .row { display:flex; align-items:center; gap:8px; margin:2px 0; }
+  #stats .v { margin-left:auto; font-weight:700; font-variant-numeric: tabular-nums; }
+  .sw { width:14px; height:14px; border-radius:4px; border:2px solid var(--edge); display:inline-block; }
+  #chartBox { right:12px; bottom:76px; padding:6px 8px; }
+  #chartBox .t { font-size:12px; color:var(--muted); font-weight:600; }
+  #legend { left:12px; bottom:76px; font-size:12.5px; max-width:250px; }
+  #legend .row { margin:2px 0; }
+  #controls { left:12px; right:12px; bottom:12px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  #controls button, #controls select { font-family:inherit; font-size:14px; font-weight:600; color:var(--ink);
+           background:#ffe066; border:2.5px solid var(--edge); border-radius:10px; padding:4px 12px;
+           cursor:pointer; box-shadow:0 3px 0 var(--edge); }
+  #controls button:active { transform: translateY(2px); box-shadow:0 1px 0 var(--edge); }
+  #controls select { background:#fff; }
+  #play { min-width:92px; background:#7ee081 !important; }
+  #scrub { flex:1; min-width:140px; accent-color: var(--accent); height:22px; }
+  #dayLbl { font-weight:700; min-width:76px; text-align:right; font-variant-numeric: tabular-nums; }
+  #tip { position:absolute; z-index:5; pointer-events:none; display:none; background:#fff; border:2.5px solid var(--edge);
+         border-radius:10px; padding:6px 10px; font-size:13px; white-space:nowrap; box-shadow:0 3px 0 var(--edge); }
+  #hint { position:absolute; left:50%; transform:translateX(-50%); top:12px; font-size:12px; color:var(--muted);
+          background:rgba(255,255,255,0.75); padding:3px 10px; border-radius:999px; }
+  @media (max-width: 760px) { #legend, #chartBox, #hint { display:none; } #stats { top:auto; bottom:76px; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="gl"></canvas>
+  <div id="hint">Drag to turn · scroll or pinch to zoom · hover a pen for details</div>
+  <div id="clock" class="panel">
+    <div class="big" id="clk">Day 0</div>
+    <div class="sub" id="clkSub"></div>
+    <div id="badge"></div>
+    <ul id="ctrlList"></ul>
+  </div>
+  <div id="stats" class="panel">
+    <div class="row"><span class="sw" style="background:var(--S)"></span>Healthy<span class="v" id="nS">0</span></div>
+    <div class="row"><span class="sw" style="background:var(--E)"></span>Exposed (incubating)<span class="v" id="nE">0</span></div>
+    <div class="row"><span class="sw" style="background:var(--I)"></span>Sick &amp; infectious<span class="v" id="nI">0</span></div>
+    <div class="row"><span class="sw" style="background:var(--D)"></span>Died of ASF<span class="v" id="nD">0</span></div>
+    <div class="row"><span class="sw" style="background:var(--R)"></span>Culled (control)<span class="v" id="nR">0</span></div>
+  </div>
+  <div id="chartBox" class="panel"><div class="t">Pigs by state over time</div><canvas id="chart" width="280" height="120"></canvas></div>
+  <div id="legend" class="panel">
+    <div class="row">🟡 <b>Yellow !</b> infected, not yet spreading</div>
+    <div class="row">❤️ <b>Red +, dark skin</b> sick and spreading ASF</div>
+    <div class="row">😇 <b>Grey, lying down</b> died of ASF</div>
+    <div class="row">🚩 <b>Red flag</b> pen has had an ASF death</div>
+    <div class="row">🧑‍⚕️ <b>Vet</b> arrives when ASF is confirmed</div>
+  </div>
+  <div id="controls" class="panel">
+    <button id="play">▶ Play</button>
+    <button id="restart" title="Back to day 0">⟲</button>
+    <select id="speed" title="Simulated days per second">
+      <option value="0.5">0.5 day/s</option><option value="1" selected>1 day/s</option>
+      <option value="2">2 days/s</option><option value="4">4 days/s</option><option value="8">8 days/s</option>
+    </select>
+    <input id="scrub" type="range" min="0" max="1" step="0.01" value="0">
+    <span id="dayLbl">Day 0</span>
+    <button id="cam" title="Reset the camera">🎥</button>
+  </div>
+  <div id="tip"></div>
+</div>
+<script>/*__THREE__*/</script>
+<script>
+"use strict";
+const DATA = /*__DATA__*/null;
+const NPENS = DATA.n_pens, PER = DATA.per_pen, NP = NPENS * PER, H = DATA.history, NDAYS = H.length;
+const C = DATA.counts;
+const STATE_COL = { skin: ["#ffb3c7", "#ffb3c7", "#c9577f", "#8d8b98"], snout: ["#ff8fab", "#ff8fab", "#a83d63", "#6f6d7a"] };
+
+// ---------------- renderer, scene, camera ----------------
+const canvas = document.getElementById("gl");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0xc9ecff, 90, 190);
+const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 500);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x9fd38a, 0.75));
+const sun = new THREE.DirectionalLight(0xffffff, 0.85);
+sun.position.set(30, 50, 25);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, near: 1, far: 160 });
+scene.add(sun);
+
+const mats = {};
+function mat(hex, extra) {
+  const key = hex + JSON.stringify(extra || {});
+  if (!mats[key]) mats[key] = new THREE.MeshLambertMaterial(Object.assign({ color: hex }, extra || {}));
+  return mats[key];
+}
+function box(w, h, d, color, x, y, z, parent, shadow = true) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), typeof color === "string" ? mat(color) : color);
+  m.position.set(x, y, z);
+  m.castShadow = shadow; m.receiveShadow = true;
+  (parent || scene).add(m);
+  return m;
+}
+
+// ---------------- layout: pens in rows of up to 5, snake order so pen k and k+1 always touch ----------------
+const PEN = 8, AISLE = 4, COLS = Math.min(5, NPENS), ROWS = Math.ceil(NPENS / COLS);
+function penPos(k) {
+  const r = Math.floor(k / COLS);
+  let c = k % COLS;
+  if (r % 2 === 1) c = COLS - 1 - c;
+  return { x: (c - (COLS - 1) / 2) * PEN, z: (r - (ROWS - 1) / 2) * (PEN + AISLE), r, c };
+}
+const farmW = COLS * PEN, farmD = ROWS * PEN + (ROWS - 1) * AISLE;
+
+// ---------------- toy baseplate with studs ----------------
+const GW = Math.ceil((farmW + 44) / 2) * 2, GD = Math.ceil((farmD + 52) / 2) * 2;
+box(GW, 1, GD, "#6cc551", 0, -0.5, 0, scene, false);
+function studs(w, d, y, color, cx, cz) {
+  const nx = Math.floor(w / 2), nz = Math.floor(d / 2);
+  const geo = new THREE.CylinderGeometry(0.32, 0.32, 0.22, 14);
+  const im = new THREE.InstancedMesh(geo, mat(color), nx * nz);
+  const m4 = new THREE.Matrix4();
+  let i = 0;
+  for (let a = 0; a < nx; a++) for (let b = 0; b < nz; b++) {
+    m4.makeTranslation(cx - w / 2 + 1 + a * 2, y + 0.11, cz - d / 2 + 1 + b * 2);
+    im.setMatrixAt(i++, m4);
+  }
+  im.receiveShadow = true;
+  scene.add(im);
+}
+studs(GW, GD, 0, "#6cc551", 0, 0);
+
+// ---------------- pens: floor plate, fences, sign, flag ----------------
+const FLOOR_Y = 0.36;
+const pens = [];
+function fence(x1, z1, x2, z2) {
+  const len = Math.hypot(x2 - x1, z2 - z1), alongX = Math.abs(x2 - x1) > 0.01;
+  const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
+  for (const t of [0, 0.5, 1]) box(0.42, 1.5, 0.42, "#8a5a32", x1 + (x2 - x1) * t, FLOOR_Y + 0.75, z1 + (z2 - z1) * t);
+  for (const y of [0.55, 1.1])
+    box(alongX ? len : 0.22, 0.24, alongX ? 0.22 : len, "#c98b4e", mx, FLOOR_Y + y, mz);
+}
+for (let k = 0; k < NPENS; k++) {
+  const p = penPos(k);
+  const floor = box(PEN, FLOOR_Y, PEN, "#e8c48a", p.x, FLOOR_Y / 2, p.z, scene, false);
+  floor.userData.pen = k;
+  studs(PEN, PEN, FLOOR_Y, "#e8c48a", p.x, p.z);
+  const h = PEN / 2;
+  fence(p.x - h, p.z - h, p.x + h, p.z - h);
+  fence(p.x - h, p.z + h, p.x + h, p.z + h);
+  // west side always, east side only for the last physical column (shared walls are drawn once)
+  fence(p.x - h, p.z - h, p.x - h, p.z + h);
+  const lastCol = (p.c === COLS - 1) || !Array.from({ length: NPENS }, (_, j) => penPos(j)).some(q => q.r === p.r && q.c === p.c + 1);
+  if (lastCol) fence(p.x + h, p.z - h, p.x + h, p.z + h);
+  // trough
+  box(2.2, 0.4, 0.6, "#5b8def", p.x + h - 1.6, FLOOR_Y + 0.2, p.z - h + 0.7);
+  box(2.0, 0.08, 0.45, "#c7e3ff", p.x + h - 1.6, FLOOR_Y + 0.42, p.z - h + 0.7, scene, false);
+  // sign
+  const cv = document.createElement("canvas"); cv.width = 256; cv.height = 96;
+  const g = cv.getContext("2d");
+  g.fillStyle = "#fff8e1"; g.strokeStyle = "#2b2340"; g.lineWidth = 10;
+  g.beginPath(); g.roundRect ? g.roundRect(8, 8, 240, 80, 18) : g.rect(8, 8, 240, 80); g.fill(); g.stroke();
+  g.fillStyle = "#2b2340"; g.font = "700 50px Fredoka, Nunito, sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
+  g.fillText("Pen " + (k + 1), 128, 52);
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), depthWrite: false }));
+  spr.scale.set(3.2, 1.2, 1); spr.position.set(p.x, FLOOR_Y + 2.8, p.z - h);
+  scene.add(spr);
+  // flag (shown once the pen has had an ASF death)
+  const flag = new THREE.Group();
+  box(0.12, 2.6, 0.12, "#eeeeee", 0, 1.3, 0, flag);
+  box(1.0, 0.6, 0.06, "#ff3b3b", 0.55, 2.25, 0, flag);
+  flag.position.set(p.x - h + 0.4, FLOOR_Y, p.z - h + 0.4);
+  flag.visible = false;
+  scene.add(flag);
+  pens.push({ ...p, floor, flag });
+}
+
+// ---------------- scenery: barn, trees, clouds, sun ----------------
+(function scenery() {
+  const bz = -farmD / 2 - 11, g = new THREE.Group();
+  box(12, 6, 7, "#e2493b", 0, 3, 0, g);
+  box(3.2, 4, 0.2, "#ffffff", 0, 2, 3.55, g);
+  box(2.6, 3.4, 0.22, "#8a3229", 0, 1.8, 3.56, g);
+  const r1 = box(7.6, 0.6, 8, "#4a4e69", -2.9, 7.6, 0, g); r1.rotation.z = 0.62;
+  const r2 = box(7.6, 0.6, 8, "#4a4e69", 2.9, 7.6, 0, g); r2.rotation.z = -0.62;
+  box(1.6, 1.6, 0.2, "#ffe066", 0, 7.4, 3.55, g);
+  g.position.set(-farmW / 2 + 4, 0, bz);
+  scene.add(g);
+  const silo = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 9, 16), mat("#d9d9d9"));
+  silo.position.set(-farmW / 2 + 13, 4.5, bz); silo.castShadow = true; scene.add(silo);
+  const cap = new THREE.Mesh(new THREE.ConeGeometry(2.3, 2, 16), mat("#4a4e69"));
+  cap.position.set(-farmW / 2 + 13, 10, bz); scene.add(cap);
+  const tree = (x, z, s) => {
+    box(0.8 * s, 2.4 * s, 0.8 * s, "#8a5a32", x, 1.2 * s, z);
+    box(3 * s, 2 * s, 3 * s, "#2f9e44", x, 3.2 * s, z);
+    box(2 * s, 1.4 * s, 2 * s, "#40c057", x, 4.8 * s, z);
+  };
+  const ex = GW / 2 - 4, ez = GD / 2 - 4;
+  [[-ex, ez * 0.6, 1], [ex, -ez * 0.7, 1.2], [ex, ez * 0.5, 0.9], [-ex, -ez * 0.2, 1.1], [ex * 0.6, -ez, 1], [-ex * 0.3, ez, 0.8]]
+    .forEach(([x, z, s]) => tree(x, z, s));
+})();
+const clouds = [];
+for (let i = 0; i < 6; i++) {
+  const g = new THREE.Group();
+  box(6, 2, 4, "#ffffff", 0, 0, 0, g, false); box(4, 2, 3, "#ffffff", 2.5, 1.4, 0, g, false); box(3, 1.6, 3, "#ffffff", -2.6, 0.9, 0.4, g, false);
+  g.position.set(-80 + i * 32, 40 + (i % 3) * 5, -GD / 2 - 25 - (i * 17) % 40);
+  scene.add(g); clouds.push(g);
+}
+const sunCube = box(5, 5, 5, mat("#ffd43b", { emissive: 0xffc400, emissiveIntensity: 0.6 }), 60, 55, -90, scene, false);
+
+// ---------------- pigs ----------------
+const PG = {
+  body: new THREE.BoxGeometry(0.72, 0.56, 1.0), head: new THREE.BoxGeometry(0.58, 0.52, 0.46),
+  snout: new THREE.BoxGeometry(0.32, 0.22, 0.12), nostril: new THREE.BoxGeometry(0.06, 0.08, 0.02),
+  eye: new THREE.BoxGeometry(0.09, 0.11, 0.03), ear: new THREE.BoxGeometry(0.18, 0.18, 0.06),
+  leg: new THREE.BoxGeometry(0.17, 0.3, 0.17), tail: new THREE.TorusGeometry(0.08, 0.03, 6, 12, Math.PI * 1.6),
+};
+const skinMat = STATE_COL.skin.map(c => mat(c));
+const snoutMat = STATE_COL.snout.map(c => mat(c));
+const black = mat("#1d1a2b");
+const yellowGlow = mat("#ffcc33", { emissive: 0xffaa00, emissiveIntensity: 0.5 });
+const redGlow = mat("#ff3b5c", { emissive: 0xff0033, emissiveIntensity: 0.4 });
+const haloMat = mat("#ffe066", { emissive: 0xffd000, emissiveIntensity: 0.7 });
+const blueDrop = mat("#4dabf7");
+
+function mesh(geo, m, x, y, z, parent) {
+  const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = true; parent.add(o); return o;
+}
+function hash(i, s) { const x = Math.sin(i * 127.1 + s * 311.7) * 43758.5453; return x - Math.floor(x); }
+
+const pigs = [];
+for (let i = 0; i < NP; i++) {
+  const pen = Math.floor(i / PER), pp = penPos(pen);
+  const root = new THREE.Group(), body = new THREE.Group(), marks = new THREE.Group();
+  root.add(body); root.add(marks);
+  const skin = [];
+  const legs = [];
+  skin.push(mesh(PG.body, skinMat[0], 0, 0.58, 0, body));
+  skin.push(mesh(PG.head, skinMat[0], 0, 0.74, 0.62, body));
+  const snout = mesh(PG.snout, snoutMat[0], 0, 0.66, 0.9, body);
+  mesh(PG.nostril, black, -0.07, 0.66, 0.965, body); mesh(PG.nostril, black, 0.07, 0.66, 0.965, body);
+  mesh(PG.eye, black, -0.15, 0.84, 0.855, body); mesh(PG.eye, black, 0.15, 0.84, 0.855, body);
+  const e1 = mesh(PG.ear, skinMat[0], -0.2, 1.03, 0.56, body); e1.rotation.z = 0.5; skin.push(e1);
+  const e2 = mesh(PG.ear, skinMat[0], 0.2, 1.03, 0.56, body); e2.rotation.z = -0.5; skin.push(e2);
+  for (const [lx, lz] of [[-0.22, 0.32], [0.22, 0.32], [-0.22, -0.32], [0.22, -0.32]]) {
+    const piv = new THREE.Group(); piv.position.set(lx, 0.32, lz); body.add(piv);
+    skin.push(mesh(PG.leg, skinMat[0], 0, -0.15, 0, piv)); legs.push(piv);
+  }
+  const tail = mesh(PG.tail, skinMat[0], 0, 0.72, -0.53, body); tail.rotation.y = Math.PI / 2; skin.push(tail);
+  // markers
+  const mE = new THREE.Group(); mesh(new THREE.BoxGeometry(0.14, 0.38, 0.14), yellowGlow, 0, 0.3, 0, mE); mesh(new THREE.BoxGeometry(0.14, 0.14, 0.14), yellowGlow, 0, 0, 0, mE);
+  const mI = new THREE.Group(); mesh(new THREE.BoxGeometry(0.42, 0.13, 0.13), redGlow, 0, 0.15, 0, mI); mesh(new THREE.BoxGeometry(0.13, 0.42, 0.13), redGlow, 0, 0.15, 0, mI);
+  const drop = mesh(new THREE.BoxGeometry(0.08, 0.12, 0.08), blueDrop, 0.36, -0.35, 0.6, mI);
+  const mD = new THREE.Group(); const halo = mesh(new THREE.TorusGeometry(0.3, 0.06, 8, 20), haloMat, 0, 0, 0, mD); halo.rotation.x = Math.PI / 2;
+  for (const m of [mE, mI, mD]) { m.visible = false; marks.add(m); }
+  marks.position.y = 1.55;
+  root.position.set(pp.x, FLOOR_Y, pp.z);
+  scene.add(root);
+  pigs.push({ i, pen, root, body, marks, skin, snout, legs, mE, mI, mD, drop, state: -1, shrink: 0,
+              ph: hash(i, 1) * 100, w1: 0.25 + hash(i, 2) * 0.35, w2: 0.2 + hash(i, 3) * 0.35,
+              f1: hash(i, 4) * 6.28, f2: hash(i, 5) * 6.28, cx: pp.x, cz: pp.z });
+}
+
+function setPigState(p, s) {
+  if (p.state === s) return;
+  const prev = p.state;
+  p.state = s;
+  const v = Math.min(s, 3);
+  for (const m of p.skin) m.material = skinMat[v];
+  p.snout.material = snoutMat[v];
+  p.mE.visible = s === 1; p.mI.visible = s === 2; p.mD.visible = s === 3;
+  p.body.rotation.set(0, 0, 0); p.body.position.set(0, 0, 0);
+  if (s === 3) { p.body.rotation.z = Math.PI / 2; p.body.position.set(0.62, 0.0, 0); p.marks.position.y = 1.4; }
+  else p.marks.position.y = 1.55;
+  if (s === 4) { p.shrink = prev === -1 ? 0.0001 : 1; p.root.visible = prev !== -1; }
+  else { p.shrink = 0; p.root.visible = true; p.root.scale.setScalar(1); }
+}
+
+// ---------------- vet (arrives when ASF is confirmed) ----------------
+const vet = new THREE.Group();
+box(0.7, 0.7, 0.7, "#f1c27d", 0, 2.35, 0, vet);
+box(0.74, 0.22, 0.74, "#5b8def", 0, 2.78, 0, vet);
+box(0.12, 0.12, 0.04, "#1d1a2b", -0.15, 2.4, 0.36, vet); box(0.12, 0.12, 0.04, "#1d1a2b", 0.15, 2.4, 0.36, vet);
+box(1.0, 1.1, 0.6, "#ffffff", 0, 1.5, 0, vet);
+box(0.3, 0.3, 0.04, "#ff3b3b", 0, 1.65, 0.32, vet); box(0.1, 0.3, 0.05, "#ffffff", 0, 1.65, 0.33, vet); box(0.3, 0.1, 0.05, "#ffffff", 0, 1.65, 0.33, vet);
+const vetLegs = [box(0.38, 0.95, 0.42, "#3b3f5c", -0.24, 0.48, 0, vet), box(0.38, 0.95, 0.42, "#3b3f5c", 0.24, 0.48, 0, vet)];
+box(0.5, 0.6, 0.08, "#8a5a32", 0.62, 1.5, 0.25, vet);
+vet.visible = false;
+scene.add(vet);
+const vetZ = ROWS > 1 ? penPos(0).z + PEN / 2 + AISLE / 2 : penPos(0).z + PEN / 2 + 2;
+
+// ---------------- HUD ----------------
+const $ = id => document.getElementById(id);
+const detDay = DATA.detection_day, fdDay = DATA.first_death_day;
+$("clkSub").textContent = `${NP} pigs in ${NPENS} pen${NPENS > 1 ? "s" : ""} · ${DATA.subtitle}`;
+const chart = $("chart"), cg = chart.getContext("2d");
+const maxN = NP;
+function drawChart(day) {
+  const W = chart.width, Hh = chart.height, pad = 6;
+  cg.clearRect(0, 0, W, Hh);
+  cg.fillStyle = "#f7f5ff"; cg.fillRect(0, 0, W, Hh);
+  const X = d => pad + (W - 2 * pad) * d / Math.max(1, NDAYS - 1), Y = v => Hh - pad - (Hh - 2 * pad) * v / maxN;
+  const cols = { S: "#ff9ebb", E: "#e6a700", I: "#e0457b", D: "#7d7b8a", R: "#5b8def" };
+  for (const k of ["S", "E", "I", "D", "R"]) {
+    cg.strokeStyle = cols[k]; cg.lineWidth = 2.5; cg.beginPath();
+    C[k].forEach((v, d) => d ? cg.lineTo(X(d), Y(v)) : cg.moveTo(X(d), Y(v)));
+    cg.stroke();
+  }
+  if (Number.isFinite(detDay) && detDay < NDAYS) {
+    cg.strokeStyle = "#ff3b3b"; cg.setLineDash([4, 3]); cg.lineWidth = 1.5;
+    cg.beginPath(); cg.moveTo(X(detDay), pad); cg.lineTo(X(detDay), Hh - pad); cg.stroke(); cg.setLineDash([]);
+  }
+  cg.strokeStyle = "#2b2340"; cg.lineWidth = 2; cg.beginPath(); cg.moveTo(X(day), pad); cg.lineTo(X(day), Hh - pad); cg.stroke();
+}
+(DATA.controls || []).forEach(t => { const li = document.createElement("li"); li.textContent = t; $("ctrlList").appendChild(li); });
+
+let curDay = -1;
+function applyDay(day) {
+  day = Math.max(0, Math.min(NDAYS - 1, day));
+  if (day === curDay) return;
+  curDay = day;
+  const row = H[day];
+  const deadInPen = new Array(NPENS).fill(0);
+  for (let i = 0; i < NP; i++) {
+    const s = row.charCodeAt(i) - 48;
+    setPigState(pigs[i], s);
+    if (s === 3) deadInPen[pigs[i].pen]++;
+  }
+  pens.forEach((p, k) => p.flag.visible = deadInPen[k] > 0);
+  for (const k of ["S", "E", "I", "D", "R"]) $("n" + k).textContent = C[k][day];
+  $("clk").textContent = `Day ${day}`;
+  $("dayLbl").textContent = `Day ${day} / ${NDAYS - 1}`;
+  let b = "";
+  if (Number.isFinite(detDay) && day >= detDay) b = `<span class="badge b-alert">🚨 ASF confirmed on day ${detDay}</span>`;
+  else if (Number.isFinite(fdDay) && day >= fdDay) b = `<span class="badge b-alert">💀 First death on day ${fdDay}${Number.isFinite(detDay) ? ", awaiting lab confirmation" : ", nobody reports it"}</span>`;
+  else b = `<span class="badge b-ok">🐷 Looks normal… one pig is carrying ASF</span>`;
+  if (day === NDAYS - 1) b += `<br><span class="badge b-over">🏁 Outbreak over: ${C.D[day] + C.R[day]} pigs lost</span>`;
+  $("badge").innerHTML = b;
+  $("ctrlList").style.display = Number.isFinite(detDay) && day >= detDay ? "block" : "none";
+  vet.visible = Number.isFinite(detDay) && day >= detDay;
+  drawChart(day);
+}
+
+// ---------------- playback ----------------
+let playing = false, simT = 0, speed = 1;
+const scrub = $("scrub");
+scrub.max = String(NDAYS - 1);
+$("play").onclick = () => { if (simT >= NDAYS - 1) simT = 0; playing = !playing; $("play").textContent = playing ? "⏸ Pause" : "▶ Play"; };
+$("restart").onclick = () => { simT = 0; applyDay(0); scrub.value = "0"; };
+$("speed").onchange = e => speed = parseFloat(e.target.value);
+scrub.oninput = () => { simT = parseFloat(scrub.value); applyDay(Math.floor(simT)); };
+
+// ---------------- camera orbit ----------------
+const target = new THREE.Vector3(0, 0, 0);
+const camDefault = { r: Math.max(farmW, farmD * 1.6) * 1.05 + 12, th: 0.45, ph: 0.92 };
+let orb = { ...camDefault };
+function placeCam() {
+  orb.ph = Math.max(0.2, Math.min(1.45, orb.ph)); orb.r = Math.max(8, Math.min(220, orb.r));
+  camera.position.set(target.x + orb.r * Math.sin(orb.ph) * Math.sin(orb.th), target.y + orb.r * Math.cos(orb.ph), target.z + orb.r * Math.sin(orb.ph) * Math.cos(orb.th));
+  camera.lookAt(target);
+}
+$("cam").onclick = () => { orb = { ...camDefault }; placeCam(); };
+let drag = null, pinch = null;
+canvas.addEventListener("pointerdown", e => { drag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener("pointerup", () => drag = null);
+canvas.addEventListener("pointermove", e => {
+  if (drag) { orb.th -= (e.clientX - drag.x) * 0.006; orb.ph -= (e.clientY - drag.y) * 0.005; drag = { x: e.clientX, y: e.clientY }; placeCam(); }
+  hover(e);
+});
+canvas.addEventListener("wheel", e => { e.preventDefault(); orb.r *= Math.exp(e.deltaY * 0.001); placeCam(); }, { passive: false });
+canvas.addEventListener("touchmove", e => {
+  if (e.touches.length === 2) {
+    const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+    if (pinch) { orb.r *= pinch / d; placeCam(); }
+    pinch = d; drag = null; e.preventDefault();
+  }
+}, { passive: false });
+canvas.addEventListener("touchend", () => pinch = null);
+
+// ---------------- hover tooltip on pens ----------------
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(), tip = $("tip");
+const floors = pens.map(p => p.floor);
+function hover(e) {
+  const r = canvas.getBoundingClientRect();
+  mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+  const hit = ray.intersectObjects(floors)[0];
+  if (!hit || drag) { tip.style.display = "none"; return; }
+  const k = hit.object.userData.pen, n = [0, 0, 0, 0, 0], row = H[Math.max(0, curDay)];
+  for (let i = k * PER; i < (k + 1) * PER; i++) n[row.charCodeAt(i) - 48]++;
+  tip.innerHTML = `<b>Pen ${k + 1}</b><br>🐷 healthy ${n[0]} · 🟡 exposed ${n[1]} · ❤️ sick ${n[2]}<br>😇 died ${n[3]} · 🚚 culled ${n[4]}`;
+  tip.style.display = "block";
+  tip.style.left = Math.min(e.clientX - r.left + 14, r.width - 260) + "px";
+  tip.style.top = (e.clientY - r.top + 14) + "px";
+}
+
+// ---------------- animation loop ----------------
+function resize() {
+  const w = canvas.parentElement.clientWidth, h = canvas.parentElement.clientHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+window.addEventListener("resize", resize);
+if (window.ResizeObserver) new ResizeObserver(resize).observe(canvas.parentElement);
+const half = PEN / 2 - 0.9;
+for (const p of pigs) p.root.position.set(p.cx + half * Math.sin(p.ph * p.w1 + p.f1), FLOOR_Y, p.cz + half * Math.sin(p.ph * p.w2 + p.f2));
+resize(); placeCam(); applyDay(0);
+
+let last = performance.now();
+function frame(now) {
+  if (canvas.parentElement.clientWidth === 0 || document.hidden) { last = now; requestAnimationFrame(frame); return; }  // hidden tab: idle
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  const T = now / 1000;
+  if (playing) {
+    simT += dt * speed;
+    if (simT >= NDAYS - 1) { simT = NDAYS - 1; playing = false; $("play").textContent = "▶ Play"; }
+    scrub.value = String(simT);
+    applyDay(Math.floor(simT));
+  }
+  for (const p of pigs) {
+    const s = p.state;
+    if (s <= 2) {
+      const sp = s === 2 ? 0.3 : 1;
+      p.ph += dt * sp;
+      const a1 = p.ph * p.w1 + p.f1, a2 = p.ph * p.w2 + p.f2;
+      const x = p.cx + half * Math.sin(a1), z = p.cz + half * Math.sin(a2);
+      const vx = Math.cos(a1) * p.w1, vz = Math.cos(a2) * p.w2;
+      p.root.position.set(x, FLOOR_Y + Math.abs(Math.sin(p.ph * 9)) * 0.05 * sp, z);
+      p.root.rotation.y = Math.atan2(vx, vz);
+      const swing = Math.sin(p.ph * 11) * 0.55 * sp;
+      p.legs[0].rotation.x = swing; p.legs[3].rotation.x = swing; p.legs[1].rotation.x = -swing; p.legs[2].rotation.x = -swing;
+      p.body.rotation.z = s === 2 ? Math.sin(T * 18 + p.i) * 0.05 : 0;
+      if (s === 2) { p.drop.position.y = -0.35 - ((T * 0.8 + hash(p.i, 9)) % 1) * 0.5; }
+    }
+    if (p.marks.visible) {
+      p.marks.rotation.y = T * 2 + p.i;
+      if (s !== 3) p.marks.position.y = 1.55 + Math.sin(T * 3 + p.i) * 0.08;
+    }
+    if (s === 4 && p.root.visible) {
+      p.shrink = Math.max(0, p.shrink - dt * 2);
+      p.root.scale.setScalar(Math.max(0.001, p.shrink));
+      p.root.position.y = FLOOR_Y + (1 - p.shrink) * 1.5;
+      if (p.shrink <= 0) p.root.visible = false;
+    }
+  }
+  if (vet.visible) {
+    const span = farmW / 2 - 1, u = T * 0.18;
+    const x = span * Math.sin(u);
+    vet.position.set(x, FLOOR_Y * 0, vetZ);
+    vet.rotation.y = Math.cos(u) >= 0 ? Math.PI / 2 : -Math.PI / 2;
+    vetLegs[0].rotation.x = Math.sin(T * 8) * 0.4; vetLegs[1].rotation.x = -Math.sin(T * 8) * 0.4;
+  }
+  clouds.forEach((c, i) => { c.position.x += dt * (0.6 + i * 0.1); if (c.position.x > 110) c.position.x = -110; });
+  sunCube.rotation.y = T * 0.2; sunCube.rotation.x = T * 0.13;
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
